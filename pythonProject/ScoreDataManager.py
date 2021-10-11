@@ -1,7 +1,12 @@
 import datetime
+import os
+import struct
 
 
 class StudentInfo:
+    struct_fmt = '=20s30s8s'  # serialize format
+    struct_len = struct.calcsize(struct_fmt)
+
     def __init__(self, n, e, i):
         self.name = n
         self.email = e
@@ -14,16 +19,39 @@ class StudentInfo:
         print("e-mail:" + self.email)
         print("id:" + self.id)
 
+    # 클래스 통체로 직렬화
+    def serialize(self) -> bytes:
+        return struct.pack(StudentInfo.struct_fmt, self.name.encode('utf-8'), self.email.encode('utf-8'),
+                           self.id.encode('utf-8'))
 
+    # 클래스 정보를 역직렬화
+    def deserialize(self, buffer):
+        info = struct.unpack(StudentInfo.struct_fmt, buffer)
+        self.name = info[0].decode('utf-8').replace('\x00', '')  # \x00 is empty byte
+        self.email = info[1].decode('utf-8').replace('\x00', '')  # \x00 is empty byte
+        self.id = info[2].decode('utf-8').replace('\x00', '')  # \x00 is empty byte
+
+
+# ScoreDataManager 를 사용하려면 static init 함수를 반드시 호출할것
 class ScoreDataManager:
+    # 관리자 계정 정보
     Administer_ID = "admin"
     Administer_PW = "1234"
-
+    # info 관련 변수들
     major_dictionary = {1: "프로그래밍", 2: "기획", 3: "그래픽"}
     major_subjects_list = [[], [], [], []]  # 학과별 과목들 dictionary 리스트
     max_subjects = 5  # 학과별 최대 과목 수
     major_counter = [0, 1, 1, 1]  # 학과에 추가된 학생 수를 기록 # 0번방 사용 안함
     major_studentInfo_lists = [[], [], [], []]  # 학과별 학생들 info # 0번방 사용 안함
+
+    # 클래스 첫 초기화 작업
+    # 초기화 완료시 true
+    @staticmethod
+    def static_init():
+        try:
+            ScoreDataManager.load_data_from_file()
+        except Exception:
+            raise Exception
 
     # 관리자 프로세스 실행
     # 잘못 입력 시 NotImplementdError
@@ -42,9 +70,16 @@ class ScoreDataManager:
                 if num < 1 or num > 4:
                     raise NotImplementedError('잘못된 입력 값입니다')
 
-                if num == 4:
+                if num == 4:  # 관리자 모드 종료
                     ScoreDataManager.exit_admin()
                     break  # 관리자 모드 반복문 종료
+
+                if num == 1:  # 학생 추가
+                    ScoreDataManager.new_student()
+                if num == 2:  # 과목 추가
+                    ScoreDataManager.new_subject()
+                if num == 3:  # 과목 삭제
+                    ScoreDataManager.delete_subject()
 
     # 관리자 로그인 인증
     # 로그인 성공 시 true
@@ -53,9 +88,9 @@ class ScoreDataManager:
         _id = input("ID:")
         _pw = input("PW:")
         if _id != ScoreDataManager.Administer_ID or _pw != ScoreDataManager.Administer_PW:
-            print("관리자 로그인 성공")
+            print("아이디 혹은 비밀번호가 틀립니다")
             return False
-        print("아이디 혹은 비밀번호가 틀립니다")
+        print("관리자 로그인 성공")
         return True
 
     # 과목을 선택하여 return
@@ -73,7 +108,7 @@ class ScoreDataManager:
     # 잘못 입력 시 NotImplementError
     @staticmethod
     def select_continue() -> bool:
-        c = input("추가입력(y/n")
+        c = input("추가입력(y/n)")
         if c == "y":
             return True
         elif c == "n":
@@ -101,10 +136,11 @@ class ScoreDataManager:
             student_info.print_info()
             # 학생 정보를 등록
             ScoreDataManager.major_studentInfo_lists[major].append(student_info)
-            
+            ScoreDataManager.major_counter[major] = ScoreDataManager.major_counter[major] + 1
+
             # 계속 추가로 진행할지 여부를 선택
             flag = ScoreDataManager.select_continue()
-            
+
     #  새로운 과목 추가
     @staticmethod
     def new_subject():
@@ -150,6 +186,71 @@ class ScoreDataManager:
     def exit_admin():
         print("관리자 모드를 종료합니다")
 
+    #     major_subjects_list = [[], [], [], []]  # 학과별 과목들 dictionary 리스트
+    #           각 과목별로 20바이트씩
+    #     max_subjects = 5  # 학과별 최대 과목 수
+    #           integer
+    #     major_counter = [0, 1, 1, 1]  # 학과에 추가된 학생 수를 기록 # 0번방 사용 안함
+    #           각 원소 integer
+    #     major_studentInfo_lists = [[], [], [], []]  # 학과별 학생들 info # 0번방 사용 안함
+    #           info 의 멤버변수 serialize deserialize
+    # 현재 클래스의 필요한 내부 변수들(위에것들)을 파일에 쓰기
+    @staticmethod
+    def serialize():
+        write_data = []
+        # major_subjects_list   # size + inner_list(size + item) + inner_list ...
+        write_data.append(struct.pack("=i", len(ScoreDataManager.major_subjects_list)))
+        for inner_list in ScoreDataManager.major_subjects_list:
+            write_data.append(struct.pack("=i", len(inner_list)))
+            for item in inner_list:
+                write_data.append(struct.pack("=20s", item.encode('utf-8')))
+        # max_subjects
+        write_data.append(struct.pack("=i", ScoreDataManager.max_subjects))
+        # major_counter # size + items
+        write_data.append(struct.pack("=i", len(ScoreDataManager.major_counter)))
+        for item in ScoreDataManager.major_counter:
+            write_data.append(struct.pack("=i", item))
+        # major_studentInfo_lists   # size + inner_list(size + item) + inner_list ...
+        write_data.append(struct.pack("=i", len(ScoreDataManager.major_subjects_list)))
+        for inner_list in ScoreDataManager.major_subjects_list:
+            write_data.append(struct.pack("=i", len(inner_list)))
+            for item in inner_list:
+                write_data.append(item.serialize())
+        return write_data
+
+    # 현재 클래스의 필요한 내부 변수들을 파일에서 가져오기
+    @staticmethod
+    def deserialize(buffer):
+        # major_subjects_list   # size + inner_list(size + item) + inner_list ...
+        ScoreDataManager.major_subjects_list.clear()
+        outer_size = struct.unpack("=i", buffer)
+        for i in range(0, outer_size):
+            inner_list = []
+            inner_size = struct.unpack("=i", buffer)
+            for j in range(0, inner_size):
+                s = struct.unpack("=20s", buffer)[0].decode('utf-8').replace('\x00', '')  # \x00 is empty byte
+                inner_list.append(s)
+            ScoreDataManager.major_subjects_list.append(inner_list)
+        # max_subjects
+        ScoreDataManager.max_subjects = struct.unpack("=i", buffer)
+        # major_counter # size + items
+        ScoreDataManager.major_counter.clear()
+        outer_size = struct.unpack("=i", buffer)
+        for i in range(0, outer_size):
+            cnt = struct.unpack("=i", buffer)
+            ScoreDataManager.major_counter.append(cnt)
+        # major_studentInfo_lists   # size + inner_list(size + item) + inner_list ...
+        ScoreDataManager.major_subjects_list.clear()
+        outer_size = struct.unpack("=i", buffer)
+        for i in range(0, outer_size):
+            inner_list = []
+            inner_size = struct.unpack("=i", buffer)
+            for j in range(0, inner_size):
+                student_info = StudentInfo()
+                student_info.deserialize(buffer)
+                inner_list.append(student_info)
+            ScoreDataManager.major_subjects_list.append(inner_list)
+
     # 모든 학과의 학생 정보를 출력
     @staticmethod
     def print_all_students_info():
@@ -157,3 +258,41 @@ class ScoreDataManager:
             print()
             for item in student_list:
                 item.print_info()
+
+    # 파일에서 정보를 불러옴
+    @staticmethod
+    def load_data_from_file():
+        # 파일이 존재하지 않는다면 생성
+        if not os.path.exists("data.txt"):
+            f = open("data.txt", "w")
+            f.close()
+
+        try:
+            # 파일 로드
+            f = open("data.txt", "r", encoding="utf-8")
+            buffer = f.read()
+            ScoreDataManager.deserialize(buffer)
+        except FileNotFoundError:
+            print("존재하지 않는 파일입니다")
+        except Exception:
+            print("deserialize error")
+        finally:
+            f.close()
+
+        ScoreDataManager.print_all_students_info()
+
+    # 파일에 정보를 저장함
+    @staticmethod
+    def save_data_to_file():
+        try:
+            f = open("data.txt", "w", encoding="utf-8")
+        except FileNotFoundError:
+            print("파일 쓰기 에러")
+        except:
+            print("serialize error")
+        finally:
+            f.close()
+
+
+ScoreDataManager.static_init()
+ScoreDataManager.run()
